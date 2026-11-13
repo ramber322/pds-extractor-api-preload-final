@@ -522,87 +522,119 @@ def get_training_hours(training_rows: List[List[Any]], job_category: str = "admi
     return total_relevant_hours
 
 
+def _parse_ddmmyyyy(value) -> Optional[datetime]:
+    """Parse dd-mm-yyyy, dd/mm/yyyy, dd-mm-yy, dd/mm/yy, or ISO strings like 'YYYY-MM-DD HH:MM:SS'."""
+    if isinstance(value, datetime):
+        # openpyxl date — Excel may have misparsed dd/mm as mm/dd
+        if value.month <= 12 and value.day <= 12:
+            try:
+                return datetime(value.year, value.day, value.month)
+            except ValueError:
+                return value
+        return value
+
+    if not value:
+        return None
+
+    text = str(value).strip()
+
+    # Pattern 1: dd-mm-yy(yy) or dd/mm/yy(yy)
+    match = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$', text)
+    if match:
+        d, m, y = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        if y < 100:
+            y += 2000 if y < 50 else 1900
+        try:
+            return datetime(y, m, d)
+        except ValueError:
+            return None
+
+    # Pattern 2: ISO string 'YYYY-MM-DD HH:MM:SS' (from str(datetime) conversion)
+    match = re.match(r'^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s|T)?', text)
+    if match:
+        y, m, d = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        # Swap month/day if ambiguous (Excel mm/dd misinterpretation)
+        if m <= 12 and d <= 12:
+            try:
+                return datetime(y, d, m)
+            except ValueError:
+                pass
+        try:
+            return datetime(y, m, d)
+        except ValueError:
+            return None
+
+    # Fallback: year only
+    years = re.findall(r'(20\d{2}|19\d{2})', text)
+    if years:
+        try:
+            return datetime(int(years[0]), 1, 1)
+        except ValueError:
+            return None
+
+    return None
+# ══════════ END OF _parse_ddmmyyyy ══════════
+
+
 def get_experience_years(experience_rows: List[List[Any]], job_category: str = "administrative") -> int:
     if not experience_rows:
         return 0
-    
-    total_experience_years = 0
-    relevant_years = 0
-    current_year = datetime.now().year
-    
+
+    total_experience_years = 0.0
+    relevant_years = 0.0
+
     print("\n" + "="*70)
     print(f"EXPERIENCE RELEVANCE ANALYSIS (Category: {job_category.upper()})")
-    print(f"   Using: Semantic Similarity (Sentence-BERT) with threshold: 0.2")
     print("="*70)
-    
+
     for row in experience_rows:
         if len(row) < 2:
             continue
-        
+
         from_cell = row[0]
         to_cell = row[1]
-        
-        position_title = ""
-        if len(row) >= 3:
-            position_title = str(row[2]) if row[2] else ""
-        
-        department = ""
-        if len(row) >= 4:
-            department = str(row[3]) if row[3] else ""
-        
+
+        position_title = str(row[2]) if len(row) >= 3 and row[2] else ""
+        department = str(row[3]) if len(row) >= 4 and row[3] else ""
         experience_text = f"{position_title} {department}"
+
         
-        start_date = None
-        end_date = None
-        
-        if isinstance(from_cell, datetime):
-            start_date = from_cell
-        else:
-            text = str(from_cell)
-            years = re.findall(r'(20\d{2}|19\d{2})', text)
-            if years:
-                try:
-                    start_date = datetime(int(years[0]), 1, 1)
-                except:
-                    pass
-        
-        if isinstance(to_cell, datetime):
-            end_date = to_cell
-        elif isinstance(to_cell, str) and "present" in to_cell.lower():
+        start_date = _parse_ddmmyyyy(from_cell)
+        if isinstance(to_cell, str) and "present" in to_cell.lower():
             end_date = datetime.now()
         else:
-            text = str(to_cell)
-            years = re.findall(r'(20\d{2}|19\d{2})', text)
-            if years:
-                try:
-                    end_date = datetime(int(years[-1]), 1, 1)
-                except:
-                    pass
-        
+            end_date = _parse_ddmmyyyy(to_cell)
+
+
         if start_date and end_date:
             days = (end_date - start_date).days
             years = days / 365.25
             if 0 < years < 60:
-                total_experience_years += int(round(years))
-                
+                total_experience_years += years
+
                 is_relevant = is_text_relevant(experience_text, job_category, threshold=0.15)
-                
+
                 if is_relevant:
-                    relevant_years += int(round(years))
+                    relevant_years += years
                     status = "RELEVANT"
                 else:
                     status = "IRRELEVANT"
-                
-                print(f"  {int(round(years))}y - {position_title[:40]:<40} - {status}")
-    
+
+                print(f"  {years:.2f}y - {position_title[:40]:<40} - {status}")
+
+    # Round the SUM once, not each row
+    total_rounded = int(round(total_experience_years))
+    relevant_rounded = int(round(relevant_years))
+
     print("\n" + "="*70)
     print(f"EXPERIENCE SUMMARY:")
-    print(f"   Total Experience: {total_experience_years} years")
-    print(f"   Relevant Experience: {relevant_years} years")
-    print(f"   Irrelevant Experience: {total_experience_years - relevant_years} years")
+    print(f"   Total Experience: {total_rounded} years")
+    print(f"   Relevant Experience: {relevant_rounded} years")
+    print(f"   Irrelevant Experience: {total_rounded - relevant_rounded} years")
     print("="*70 + "\n")
-    
-    return relevant_years
+
+    return relevant_rounded
+# ══════════ END OF get_experience_years ══════════
 
 
 def normalize_text(text: str) -> str:
@@ -611,3 +643,191 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\w\s-]', '', text)
     return text.strip().lower()
+
+    # =========================
+# PDF OCR PARSERS (for scanned PDF submissions)
+# =========================
+
+def extract_education_from_text(text: str) -> int:
+    """Extract education level from raw OCR text of a PDS form."""
+    text_upper = text.upper()
+
+    # Slice the EDUCATIONAL BACKGROUND section if present
+    edu_section = text
+    if "EDUCATIONAL BACKGROUND" in text_upper:
+        start = text_upper.find("EDUCATIONAL BACKGROUND")
+        end = text_upper.find("CIVIL SERVICE", start)
+        if end == -1:
+            end = text_upper.find("ELIGIBILITY", start)
+        if end == -1:
+            end = start + 3000
+        edu_section = text[start:end]
+
+    edu_upper = edu_section.upper()
+
+    # Master's / Graduate studies with a year
+    if "GRADUATE STUDIES" in edu_upper or "MASTER" in edu_upper or "PHD" in edu_upper or "DOCTOR" in edu_upper:
+        # confirm there's a year value (not just a blank row)
+        grad_match = re.search(r'(GRADUATE STUDIES|MASTER|PHD|DOCTOR)[^\n]{0,200}(20\d{2}|19\d{2})', edu_upper)
+        if grad_match:
+            return 5
+
+    # College / Bachelor's
+    if re.search(r'(COLLEGE|BACHELOR|B\.?S\.? |B\.?A\.? |BS |BA )[^\n]{0,200}(20\d{2}|19\d{2})', edu_upper):
+        return 4
+
+    # Vocational / Trade Course
+    if re.search(r'(VOCATIONAL|TRADE COURSE|NC I|NC II|NC III)', edu_upper):
+        return 3
+
+    # Secondary / High School
+    if re.search(r'(SECONDARY|HIGH SCHOOL|SENIOR HIGH|SHS)', edu_upper):
+        return 2
+
+    # Elementary
+    if re.search(r'(ELEMENTARY|PRIMARY)', edu_upper):
+        return 1
+
+    return 0
+
+
+def extract_eligibility_from_text(text: str) -> str:
+    """Extract eligibility level from raw OCR text. Checks Career Service BEFORE RA 1080 header."""
+    text_upper = text.upper()
+
+    elig_section = text
+    if "CIVIL SERVICE ELIGIBILITY" in text_upper:
+        start = text_upper.find("CIVIL SERVICE ELIGIBILITY")
+        end = text_upper.find("WORK EXPERIENCE", start)
+        if end == -1:
+            end = start + 1500
+        elig_section = text[start:end]
+
+    elig_upper = elig_section.upper()
+
+    # ✅ Career Service FIRST — before RA 1080 header text
+    if re.search(r'CAREER\s+SERVICE\s+PROFESSIONAL|CSC\s+PROFESSIONAL|PROFESSIONAL\s+87', elig_upper):
+        return "professional"
+
+    if re.search(r'SUB.?PROFESSIONAL', elig_upper):
+        return "subprofessional"
+
+    # Specific RA 1080 licenses
+    if re.search(r'RA\s*1080\s*\(\s*(PHYSICIAN|MEDICAL DOCTOR)', elig_upper):
+        return "ra1080_physician"
+    if re.search(r'RA\s*1080\s*\(\s*(TEACHER|PROFESSIONAL TEACHER)', elig_upper):
+        return "ra1080_teacher"
+    if re.search(r'RA\s*1080\s*\(\s*(SOCIAL WORKER)', elig_upper):
+        return "ra1080_social_worker"
+
+    # Generic RA 1080
+    if "RA 1080" in elig_upper or "RA1080" in elig_upper:
+        return "ra1080_professional"
+
+    if re.search(r'DATA\s+ENCODER|CATEGORY\s+II', elig_upper):
+        return "data_encoder"
+
+    return "unknown"
+# ══════════ END OF extract_eligibility_from_text ══════════
+
+
+def extract_training_hours_from_text(text: str) -> int:
+    """Extract total training hours from raw OCR text."""
+    text_upper = text.upper()
+
+    training_section = text
+    if "LEARNING AND DEVELOPMENT" in text_upper:
+        start = text_upper.find("LEARNING AND DEVELOPMENT")
+        end = text_upper.find("OTHER INFORMATION", start)
+        if end == -1:
+            end = start + 3000
+        training_section = text[start:end]
+
+    ts_upper = training_section.upper()
+
+    # Pattern 1: "30.0 hours" or "40 hours"
+    hours = re.findall(r'(\d+\.?\d*)\s*(?:HOURS?|HRS?)', ts_upper)
+
+    # Pattern 2: "12-10-24 30.0 Technical" (date, hours, L&D type)
+    standalone = re.findall(
+        r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\s+(\d+\.?\d*)\s+(?:TECHNICAL|MANAGERIAL|SUPERVISORY|GENERAL)',
+        ts_upper
+    )
+
+    total = 0.0
+    for h in hours + standalone:
+        try:
+            v = float(h)
+            if 0 < v < 500:
+                total += v
+        except ValueError:
+            pass
+
+    return int(total)
+
+
+def extract_experience_from_text(text: str) -> int:
+    """Extract years of experience from raw OCR text. Parses dd/mm/yyyy correctly."""
+    text_upper = text.upper()
+
+    exp_section = text
+    if "WORK EXPERIENCE" in text_upper:
+        start = text_upper.find("WORK EXPERIENCE")
+        end = text_upper.find("VOLUNTARY WORK", start)
+        if end == -1:
+            end = text_upper.find("LEARNING AND DEVELOPMENT", start)
+        if end == -1:
+            end = start + 3000
+        exp_section = text[start:end]
+
+    pairs = re.findall(
+        r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(Present|PRESENT|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+        exp_section,
+        re.IGNORECASE,
+    )
+
+    now = datetime.now()
+    total_years = 0.0
+    seen_ranges = set()
+
+    for start_str, end_str in pairs:
+        if (start_str, end_str) in seen_ranges:
+            continue
+        seen_ranges.add((start_str, end_str))
+
+        try:
+            # dd/mm/yyyy — day first
+            s_parts = re.split(r'[-/]', start_str)
+            if len(s_parts) != 3:
+                continue
+            s_d, s_m, s_y = int(s_parts[0]), int(s_parts[1]), int(s_parts[2])
+            if s_y < 100:
+                s_y += 2000 if s_y < 50 else 1900
+
+            if end_str.lower() in ["present", "current"]:
+                e_d, e_m, e_y = now.day, now.month, now.year
+            else:
+                e_parts = re.split(r'[-/]', end_str)
+                if len(e_parts) != 3:
+                    continue
+                e_d, e_m, e_y = int(e_parts[0]), int(e_parts[1]), int(e_parts[2])
+                if e_y < 100:
+                    e_y += 2000 if e_y < 50 else 1900
+
+            try:
+                s_date = datetime(s_y, s_m, s_d)
+                e_date = datetime(e_y, e_m, e_d)
+            except ValueError:
+                continue
+
+            if e_date < s_date:
+                continue
+
+            years = (e_date - s_date).days / 365.25
+            if 0 < years < 50:
+                total_years += years
+        except (ValueError, IndexError):
+            continue
+
+    return int(round(total_years))
+# ══════════ END OF extract_experience_from_text ══════════
