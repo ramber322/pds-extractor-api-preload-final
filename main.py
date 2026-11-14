@@ -412,6 +412,17 @@ async def upload_pds(
                         status_code=400,
                         content={"error": "Could not extract readable text from the PDF. Please upload a clearer scan."}
                     )
+                    # === TEMP DEBUG: dump the raw training section ===
+                print("\n" + "=" * 70)
+                print("RAW PDF TRAINING SECTION")
+                print("=" * 70)
+                _idx = pdf_text.upper().find("LEARNING AND DEVELOPMENT")
+                if _idx >= 0:
+                    print(pdf_text[_idx:_idx + 2000])
+                else:
+                    print("SECTION NOT FOUND — 'LEARNING AND DEVELOPMENT' missing from PDF text")
+                print("=" * 70 + "\n")
+                # === END TEMP DEBUG ===
             except Exception as pdf_err:
                 return JSONResponse(
                     status_code=400,

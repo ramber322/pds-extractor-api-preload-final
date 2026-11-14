@@ -766,7 +766,7 @@ def extract_training_hours_from_text(text: str, job_category: str = "administrat
 
     row_pattern = re.compile(
         r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(\d+\.?\d*)\s+'
-        r'(TECHNICAL|MANAGERIAL|SUPERVISORY|GENERAL)',
+        r'(TECHNICAL|MANAGERIAL|SUPERVISORY|GENERAL|FOUNDATION)',
         re.IGNORECASE,
     )
 
@@ -789,17 +789,24 @@ def extract_training_hours_from_text(text: str, job_category: str = "administrat
         if not surrounding:
             continue
 
+        # For the first match, surrounding includes the whole header block.
+        # The actual training title is on the last line before the dates — keep only that.
+        if "\n" in surrounding:
+            last_line = surrounding.rsplit("\n", 1)[-1].strip()
+            if last_line:
+                surrounding = last_line
+
         type_word = match.group(4)
         combined = f"{surrounding} {type_word}"
         surrounding_lower = combined.lower()
 
+        if any(noise in surrounding_lower for noise in header_noise):
+            print(f"  SKIPPED (header): {hours}h - {surrounding[:80]}")
+            continue
+
         if is_training_relevant(combined, job_category):
             total += hours
             print(f"  RELEVANT: {hours}h - {surrounding[:80]}")
-            continue
-
-        if any(noise in surrounding_lower for noise in header_noise):
-            print(f"  SKIPPED (header): {hours}h - {surrounding[:80]}")
             continue
 
         print(f"  IRRELEVANT: {hours}h - {surrounding[:80]}")
