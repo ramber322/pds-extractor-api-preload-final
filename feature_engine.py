@@ -3,6 +3,28 @@ from datetime import datetime
 from typing import List, Any, Optional, Dict
 import numpy as np
 
+JOB_CATEGORY_TRAINING_KEYWORDS = {
+    "administrative": ["admin", "clerical", "office", "secretarial", "records", "management", "filing", "document"],
+    "finance": ["accounting", "budget", "finance", "audit", "tax", "payroll", "cashier", "treasury"],
+    "engineering": ["engineering", "civil", "mechanical", "electrical", "structural", "design", "construction", "autocad"],
+    "construction": ["building", "construction", "inspection", "safety", "structural", "foreman"],
+    "communications": ["communication", "media", "writing", "journalism", "broadcast", "public relations", "content"],
+    "agriculture": ["agriculture", "veterinary", "animal", "crop", "farming", "livestock"],
+    "sports": ["sports", "recreation", "physical education", "coaching", "athletic"],
+    "technical": ["mechanic", "automotive", "repair", "maintenance", "diesel", "welding", "machinery"],
+    "it": ["it ", "computer", "software", "network", "system", "programming", "cyber", "database", "servicing", "tech", "information technology"],
+    "planning": ["planning", "urban", "zoning", "development", "research", "statistics"],
+    "social_services": ["social", "community", "welfare", "counseling", "outreach", "family"],
+}
+
+
+def is_training_relevant(training_text: str, job_category: str) -> bool:
+    """Keyword-based relevance for training titles."""
+    text_lower = training_text.lower()
+    keywords = JOB_CATEGORY_TRAINING_KEYWORDS.get(job_category.lower(), [])
+    return any(kw in text_lower for kw in keywords)
+# ══════════ END OF is_training_relevant ══════════
+
 # =========================
 # SENTENCE-BERT FOR SEMANTIC RELEVANCE
 # =========================
@@ -429,22 +451,21 @@ def get_education_level(text: str) -> int:
 def get_training_hours(training_rows: List[List[Any]], job_category: str = "administrative") -> int:
     if not training_rows:
         return 0
-    
-    total_relevant_hours = 0
-    total_hours = 0
-    
+
+    total_relevant_hours = 0.0
+    total_hours = 0.0
+
     training_keywords = ["seminar", "workshop", "course", "training", "program", "conference", "webinar", "certification"]
     header_keywords = ["learning and development", "l&d", "title of learning", "inclusive dates", "number of hours", "type of l&d", "conducted/sponsored", "write in full", "dd/mm/yyyy"]
-    
+
     print("\n" + "="*70)
     print(f"TRAINING RELEVANCE ANALYSIS (Category: {job_category.upper()})")
-    print(f"   Using: Semantic Similarity (Sentence-BERT) with threshold: 0.2")
     print("="*70)
-    
+
     for row in training_rows:
         has_real_content = False
         row_values = []
-        
+
         for cell in row:
             if cell is None:
                 continue
@@ -452,15 +473,15 @@ def get_training_hours(training_rows: List[List[Any]], job_category: str = "admi
             if cell_str and cell_str.lower() != "n/a":
                 has_real_content = True
                 row_values.append(cell_str)
-        
+
         if not has_real_content:
             continue
-        
+
         row_text = " ".join(row_values).lower()
-        
+
         if "n/a" in row_text and len(row_values) <= 2:
             continue
-        
+
         is_header = False
         for keyword in header_keywords:
             if keyword in row_text:
@@ -468,23 +489,22 @@ def get_training_hours(training_rows: List[List[Any]], job_category: str = "admi
                 break
         if is_header:
             continue
-        
-        has_training_keyword = any(k in row_text for k in training_keywords)
+
         has_date = re.search(r'(20\d{2}|19\d{2})', row_text)
-        
+
         hours = 0
         for cell in row:
             if cell is None:
                 continue
             cell_str = str(cell).strip()
-            
+
             hour_match = re.search(r'(\d+\.?\d*)\s*(?:hours?|hrs?|h)\b', cell_str, re.IGNORECASE)
             if hour_match:
                 try:
                     hours += float(hour_match.group(1))
                 except ValueError:
                     pass
-            
+
             if hours == 0:
                 number_match = re.match(r'^(\d+\.?\d*)\s*$', cell_str)
                 if number_match:
@@ -494,32 +514,33 @@ def get_training_hours(training_rows: List[List[Any]], job_category: str = "admi
                             hours += h
                     except ValueError:
                         pass
-        
+
         if hours == 0:
             hours = extract_hours_from_text(row_text)
-        
+
         if hours > 0:
             total_hours += hours
             title = extract_training_title(row) or "Unknown Training"
-            
-            is_relevant = is_text_relevant(row_text, job_category, threshold=0.2)
-            
+
+            is_relevant = is_training_relevant(row_text, job_category)
+
             if is_relevant:
                 total_relevant_hours += hours
                 status = "RELEVANT"
             else:
                 status = "IRRELEVANT"
-            
+
             print(f"  {hours}h - {title[:40]:<40} - {status}")
-    
+
     print("\n" + "="*70)
     print(f"TRAINING SUMMARY:")
     print(f"   Total Training Hours: {total_hours}")
     print(f"   Relevant Hours: {total_relevant_hours}")
     print(f"   Irrelevant Hours: {total_hours - total_relevant_hours}")
     print("="*70 + "\n")
-    
-    return total_relevant_hours
+
+    return int(round(total_relevant_hours))
+# ══════════ END OF get_training_hours ══════════
 
 
 def _parse_ddmmyyyy(value) -> Optional[datetime]:
@@ -731,8 +752,8 @@ def extract_eligibility_from_text(text: str) -> str:
 # ══════════ END OF extract_eligibility_from_text ══════════
 
 
-def extract_training_hours_from_text(text: str) -> int:
-    """Extract total training hours from raw OCR text."""
+def extract_training_hours_from_text(text: str, job_category: str = "administrative") -> int:
+    """Extract RELEVANT training hours from raw OCR text."""
     text_upper = text.upper()
 
     training_section = text
@@ -743,27 +764,48 @@ def extract_training_hours_from_text(text: str) -> int:
             end = start + 3000
         training_section = text[start:end]
 
-    ts_upper = training_section.upper()
-
-    # Pattern 1: "30.0 hours" or "40 hours"
-    hours = re.findall(r'(\d+\.?\d*)\s*(?:HOURS?|HRS?)', ts_upper)
-
-    # Pattern 2: "12-10-24 30.0 Technical" (date, hours, L&D type)
-    standalone = re.findall(
-        r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\s+(\d+\.?\d*)\s+(?:TECHNICAL|MANAGERIAL|SUPERVISORY|GENERAL)',
-        ts_upper
+    row_pattern = re.compile(
+        r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(\d+\.?\d*)\s+'
+        r'(TECHNICAL|MANAGERIAL|SUPERVISORY|GENERAL)',
+        re.IGNORECASE,
     )
 
+    header_noise = [
+        "dd/mm", "write in full", "number of hours", "type of l&d",
+        "supervisory/", "managerial/", "conducted/ sponsored",
+        "interventions", "training programs attendance",
+    ]
+
     total = 0.0
-    for h in hours + standalone:
-        try:
-            v = float(h)
-            if 0 < v < 500:
-                total += v
-        except ValueError:
-            pass
+    last_match_end = 0
+    for match in row_pattern.finditer(training_section):
+        hours = float(match.group(3))
+        if not (0 < hours < 500):
+            continue
+
+        surrounding = training_section[last_match_end:match.start()].strip()
+        last_match_end = match.end()
+
+        if not surrounding:
+            continue
+
+        type_word = match.group(4)
+        combined = f"{surrounding} {type_word}"
+        surrounding_lower = combined.lower()
+
+        if is_training_relevant(combined, job_category):
+            total += hours
+            print(f"  RELEVANT: {hours}h - {surrounding[:80]}")
+            continue
+
+        if any(noise in surrounding_lower for noise in header_noise):
+            print(f"  SKIPPED (header): {hours}h - {surrounding[:80]}")
+            continue
+
+        print(f"  IRRELEVANT: {hours}h - {surrounding[:80]}")
 
     return int(total)
+# ══════════ END OF extract_training_hours_from_text ══════════
 
 
 def extract_experience_from_text(text: str) -> int:

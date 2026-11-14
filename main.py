@@ -450,7 +450,7 @@ async def upload_pds(
         if is_pdf:
             education_val = extract_education_from_text(pdf_text)
             eligibility_val = extract_eligibility_from_text(pdf_text)
-            training_val = extract_training_hours_from_text(pdf_text)
+            training_val = extract_training_hours_from_text(pdf_text, detected_category)
             experience_val = extract_experience_from_text(pdf_text)
 
             applicant = {
