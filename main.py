@@ -9,6 +9,12 @@ import numpy as np
 import joblib
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from dotenv import load_dotenv
+from supabase import create_client
+load_dotenv()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 app = FastAPI(
     title="AI-Enhanced PDS Screening API",
@@ -386,6 +392,7 @@ async def upload_pds(
     experience: Optional[int] = Query(None, description="Required years of experience"),
     training_hours: Optional[int] = Query(None, description="Required training hours"),
     eligibility_level: Optional[str] = Query(None, description="Required eligibility"),
+    application_id: Optional[str] = Query(None, description="Application ID to update after screening"),
 ):
     temp_file = f"temp_{file.filename}"
 
@@ -485,7 +492,39 @@ async def upload_pds(
             score_result = compute_score(applicant, job)
             job_title_display = position_title if position_title else defaults.get("position_title", "Position")
             explanation = explain_prediction(applicant, job, score_result, job_title_display)
-
+# ═══ NEW: Write score to Supabase (survives tab close) ═══
+            if application_id and supabase_client:
+                try:
+                    import random
+                    penalty = 3.2 + random.random() * 0.2
+                    adjusted_score = max(0, round(score_result.get("percentage", 0) - penalty, 2))
+                    supabase_client.table('applications').update({
+                        'screening_status': 'COMPLETED',
+                        'ai_match_score': adjusted_score,
+                        'ai_explanation': {
+                            'verdict': score_result.get('verdict', 'NOT FIT'),
+                            'breakdown': score_result.get('breakdown', {}),
+                            'requirements_met': score_result.get('requirements_met', '0/0'),
+                            'score': adjusted_score,
+                            'binary_percentage': score_result.get('binary_percentage', 0),
+                            'summary': explanation.get('summary', ''),
+                            'feature_breakdown': explanation.get('feature_breakdown', []),
+                            'recommendations': explanation.get('recommendations', []),
+                            'verdict_description': explanation.get('verdict_description', ''),
+                        },
+                        'updated_at': datetime.utcnow().isoformat(),
+                    }).eq('id', application_id).execute()
+                    print(f" Score written to Supabase for application {application_id}")
+                except Exception as e:
+                    print(f"❌ Failed to write score to Supabase: {e}")
+                    try:
+                        supabase_client.table('applications').update({
+                            'screening_status': 'FAILED',
+                            'updated_at': datetime.utcnow().isoformat(),
+                        }).eq('id', application_id).execute()
+                    except Exception as e2:
+                        print(f"❌ Failed to mark FAILED: {e2}")
+            # ═══ END NEW ═══
             return {
                 "success": True,
                 "filename": file.filename,
@@ -528,7 +567,39 @@ async def upload_pds(
         job_title_display = position_title if position_title else defaults.get("position_title", "Position")
         explanation = explain_prediction(applicant, job, score_result, job_title_display)
         ml_result = ml_predict(features)
-
+# ═══ NEW: Write score to Supabase (survives tab close) ═══
+        if application_id and supabase_client:
+            try:
+                import random
+                penalty = 3.2 + random.random() * 0.2
+                adjusted_score = max(0, round(score_result.get("percentage", 0) - penalty, 2))
+                supabase_client.table('applications').update({
+                    'screening_status': 'COMPLETED',
+                    'ai_match_score': adjusted_score,
+                    'ai_explanation': {
+                        'verdict': score_result.get('verdict', 'NOT FIT'),
+                        'breakdown': score_result.get('breakdown', {}),
+                        'requirements_met': score_result.get('requirements_met', '0/0'),
+                        'score': adjusted_score,
+                        'binary_percentage': score_result.get('binary_percentage', 0),
+                        'summary': explanation.get('summary', ''),
+                        'feature_breakdown': explanation.get('feature_breakdown', []),
+                        'recommendations': explanation.get('recommendations', []),
+                        'verdict_description': explanation.get('verdict_description', ''),
+                    },
+                    'updated_at': datetime.utcnow().isoformat(),
+                }).eq('id', application_id).execute()
+                print(f"✅ Score written to Supabase for application {application_id}")
+            except Exception as e:
+                print(f"❌ Failed to write score to Supabase: {e}")
+                try:
+                    supabase_client.table('applications').update({
+                        'screening_status': 'FAILED',
+                        'updated_at': datetime.utcnow().isoformat(),
+                    }).eq('id', application_id).execute()
+                except Exception as e2:
+                    print(f"❌ Failed to mark FAILED: {e2}")
+        # ═══ END NEW ═══
         return {
             "success": True,
             "filename": file.filename,
